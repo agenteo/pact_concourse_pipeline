@@ -1,0 +1,76 @@
+---
+resources:
+
+- name: pipeline-skeleton
+  type: git
+  source:
+    uri: https://github.com/agenteo/pact_concourse_pipeline.git
+
+- name: travel-offers-webapp-project
+  type: git
+  source:
+    uri: https://github.com/agenteo/spring-boot-pact-consumer.git
+
+- name: seal-api-project
+  type: git
+  source:
+    uri: https://github.com/agenteo/ruby-sinatra-pact-provider.git
+
+- name: consumer-driven-api-contracts
+  type: git
+  source:
+    uri: git@github.com:agenteo/pact-repository.git
+    branch: master
+    private_key: {{pact-repository-key}}
+
+
+
+jobs:
+
+- name: travel-offers-webapp-consumer-tests
+  public: true
+  plan:
+  - get: pipeline-skeleton
+  - get: travel-offers-webapp-project
+    trigger: true
+  - get: consumer-driven-api-contracts
+
+  - task: consumer-tests
+    file: travel-offers-webapp-project/concourse_tests.yml
+    input_mapping:
+      sourcecode: travel-offers-webapp-project
+
+  - task: publish-consumer-contract
+    config:
+      inputs:
+        - name: target
+        - name: pipeline-skeleton
+        - name: consumer-driven-api-contracts
+      outputs:
+        - name: updated-consumer-driven-api-contracts
+      platform: linux
+      image_resource:
+        type: docker-image
+        source: { repository: concourse/bosh-cli }
+      run:
+        path: pipeline-skeleton/update-consumer-contract.sh
+
+  - put: update-consumer-driven-api-contracts
+    resource: consumer-driven-api-contracts
+    params: {repository: updated-consumer-driven-api-contracts}
+
+
+- name: seal-api-provider-tests
+  public: true
+  plan:
+  - get: seal-api-project
+    trigger: true
+  - get: consumer-driven-api-contracts
+    trigger: true
+    passed: [travel-offers-webapp-consumer-tests]
+
+  - task: provider-tests
+    file: seal-api-project/concourse_api_contract_tests.yml
+    input_mapping:
+      sourcecode: seal-api-project
+      api-contracts: consumer-driven-api-contracts
